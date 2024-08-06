@@ -1,0 +1,485 @@
+---
+title: "TBdar_fulldataset_morepopulations_statistics"
+author: "Michaela Zwyer"
+date: "2024-08-06"
+output: html_document
+---
+
+# check, if any necessary packages are missing
+
+```{r}
+list.of.packages <- c("dplyr", "compositions", "finalfit", "stats", "lmtest")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+```
+
+
+```{r}
+library(dplyr)
+tbdar = read.delim("~/Sinergia/Analysis/Human/Ancestry/Data/interim/metadata_Sinergia_final_all_pats_morePopulations.txt",
+                  sep = "\t")
+head(tbdar)
+unique(tbdar$age_category)
+# create category for TB score
+tbdar$TB_score_category <- ifelse(tbdar$TB_score < 6, "mild", ifelse(tbdar$TB_score > 5 & tbdar$TB_score < 8, "moderate", ifelse(tbdar$TB_score > 7, "severe", "somethingelse")))
+unique(tbdar$TB_score_category)
+
+# create a category for X-ray score:
+tbdar$Xray_score_category_ralph <- ifelse(tbdar$Xray_score < 71, "mild", ifelse(tbdar$Xray_score >= 71, "severe", NA))
+tbdar$Xray_01 <- ifelse(tbdar$Xray_score_category_ralph == "mild", 0, ifelse(tbdar$Xray_score_category_ralph == "severe", 1, NA))
+unique(tbdar$Xray_score_category_ralph)
+tbdar$Xray_score_category_ralph <- as.factor(tbdar$Xray_score_category_ralph)
+
+# modify the empty HIV status to NA
+tbdar$HIV_status <- ifelse(tbdar$HIV_status %in% c("infected", "positive"), "infected", ifelse(tbdar$HIV_status == "negative", "negative", NA))
+unique(tbdar$HIV_status)
+tbdar$TB_RF_smoking <- ifelse(tbdar$TB_RF_smoking == "no", "no", ifelse(tbdar$TB_RF_smoking == "yes", "yes", NA))
+
+
+
+tbdar$Intro10 <- ifelse(tbdar$Introduction == "Intro 10", 1, ifelse(tbdar$Introduction %in% c("Intro 1", "Intro 5", "Intro 9", "other"), 0, NA))
+
+tbdar$TB_score_2cat <- ifelse(tbdar$TB_score_category == "mild", "mild", ifelse(tbdar$TB_score_category %in% c("moderate", "severe"), "severe", NA))
+tbdar$TB_score_2cat <- as.factor(tbdar$TB_score_2cat)
+
+tbdar$Intro10 <- as.factor(tbdar$Intro10)
+# turn all of them into a factor:
+tbdar$TB_score_category <- as.factor(tbdar$TB_score_category)
+tbdar$Xray_score_category <- as.factor(tbdar$Xray_score_category)
+tbdar$patient_sex <- as.factor(tbdar$patient_sex)
+tbdar$HIV_status <- as.factor(tbdar$HIV_status)
+tbdar$TB_RF_smoking <- as.factor(tbdar$TB_RF_smoking)
+tbdar$Xray_01 <- as.factor(tbdar$Xray_01)
+
+# relevel some factors:
+tbdar$patient_sex <- relevel(tbdar$patient_sex, "male")
+tbdar$HIV_status <- relevel(tbdar$HIV_status, "negative")
+tbdar$Xray_01 <- relevel(tbdar$Xray_01, 1)
+tbdar$TB_score_2cat <- relevel(tbdar$TB_score_2cat, "severe")
+
+```
+
+# adjusting for the compositional variables and categorizing where necessary
+
+```{r}
+library(compositions)
+# use the additive log ratio transformation to handle the ancestries since they are compositional variables (sum up to 1)
+
+tbdar$other <- 1-(tbdar$Western_Bantu + tbdar$Southeastern_Bantu + tbdar$Eastern_Bantu)
+
+alr_data <- alr(tbdar[,c("Western_Bantu", "Southeastern_Bantu", "Eastern_Bantu","other")])
+colnames(alr_data) <- c("Western_Bantu_alr", "Southeastern_Bantu_alr", "Eastern_Bantu_alr")
+new_data <- cbind(tbdar, alr_data)
+
+```
+
+
+# build the model for X-ray score ending up with a model including the interaction
+# from now on, exclude HIV-positive patients
+
+# put the ancestries into bins and check, whether there is a linear relationship
+
+```{r}
+for (anc in c("Western_Bantu_alr", "Southeastern_Bantu_alr", "Eastern_Bantu_alr")){
+  hist(new_data[, anc], xlab = anc, main = "")
+}
+# make some categories
+
+new_data$Western_alr_cat <- ifelse(new_data$Western_Bantu_alr >= -1, 4, ifelse(new_data$Western_Bantu_alr < -1 & new_data$Western_Bantu_alr > -2, 3, ifelse(new_data$Western_Bantu_alr <= -2 & new_data$Western_Bantu_alr > -6, 2,  ifelse(new_data$Western_Bantu_alr <= -6, 1, NA))))
+
+new_data$Eastern_alr_cat <- ifelse(new_data$Eastern_Bantu_alr >= 0, 3, ifelse(new_data$Eastern_Bantu_alr < 0 & new_data$Eastern_Bantu_alr > -0.5, 2, ifelse(new_data$Eastern_Bantu_alr <= -0.5 , 1, NA)))
+new_data$Southeastern_alr_cat <- ifelse(new_data$Southeastern_Bantu_alr >= 1, 3, ifelse(new_data$Southeastern_Bantu_alr < 1 & new_data$Southeastern_Bantu_alr > 0, 2, ifelse(new_data$Southeastern_Bantu_alr <= 0 , 1, NA)))
+# age
+hist(new_data$age)
+new_data$age_cat <- ifelse(new_data$age < 30, 1, ifelse(new_data$age >= 30 & new_data$age < 40, 2, ifelse(new_data$age >= 40 & new_data$age < 50, 3, ifelse(new_data$age >= 50, 4, NA))))
+
+for (anc in c("Western", "Southeastern", "Eastern")){
+  print(anc)
+  print(table(new_data[,paste0(anc, "_alr_cat")]))
+}
+
+# categorize the cough duration
+
+hist(new_data$symptoms_duration_cough_duration)
+new_data$cough_cat <- ifelse(new_data$symptoms_duration_cough_duration >= 4, 3, ifelse(new_data$symptoms_duration_cough_duration < 4 & new_data$symptoms_duration_cough_duration >= 3, 2, ifelse(new_data$symptoms_duration_cough_duration < 3 & new_data$symptoms_duration_cough_duration >= 0, 1, NA)))
+table(new_data$cough_cat, new_data$Xray_01, exclude = NULL)
+```
+
+# create a model and look at the relationship
+
+```{r}
+library(lmtest)
+
+clean <- na.omit(new_data[new_data$HIV_status == "negative", c("Western_alr_cat", "Southeastern_alr_cat", "Eastern_alr_cat", "patient_sex", "age_cat", "symptoms_duration_cough_duration", "Intro10", "TB_RF_smoking", "Xray_01", "Western_Bantu_alr", "Southeastern_Bantu_alr", "Eastern_Bantu_alr")])
+
+dim(clean)
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat) + as.factor(Southeastern_alr_cat) + as.factor(Eastern_alr_cat), data = clean, family = binomial, na.action = na.exclude)
+print(summary(model1))
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+model2 <- glm(Xray_01 ~ 1, data = clean, family = binomial, na.action = na.exclude)
+lrtest(model1, model2)
+```
+
+--> looking at the summary I would say that Western_Bantu and Southeastern_Bantu are not linear, thus use them as categories
+
+```{r}
+# add the introduction
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10, data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + HIV_status + symptoms_duration_cough_duration
+
+# do it one by one
+
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat), data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + HIV_status + symptoms_duration_cough_duration
+
+# do it one by one
+# sex
+
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex, data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + symptoms_duration_cough_duration
+
+# do it one by one
+# smoking
+
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking, data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + symptoms_duration_cough_duration
+
+# do it one by one
+# cough duration
+
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking + symptoms_duration_cough_duration, data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+
+# Compare to a model without the ancestries
+
+
+```{r}
+library(lmtest)
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking + as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+model2 <- glm(Xray_01 ~ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking + as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+lrtest(model1, model2)
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+```
+
+
+# add the interaction
+
+
+```{r}
+model1 <- glm(Xray_01 ~ as.factor(Western_alr_cat)* Intro10 + as.factor(Eastern_alr_cat) * Intro10 + as.factor(Southeastern_alr_cat)* Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking + as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+model2 <- glm(Xray_01 ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking + as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+
+lrtest(model2, model1) 
+```
+
+
+# now for TB-score
+
+# create a model and look at the relationship
+
+```{r}
+library(lmtest)
+
+clean <- na.omit(new_data[new_data$HIV_status == "negative", c("Western_alr_cat", "Southeastern_alr_cat", "Eastern_alr_cat", "patient_sex", "age_cat", "symptoms_duration_cough_duration", "Intro10", "TB_RF_smoking", "TB_score_2cat", "Western_Bantu_alr", "Southeastern_Bantu_alr", "Eastern_Bantu_alr", "cough_cat")])
+dim(clean)
+
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Southeastern_alr_cat) + as.factor(Eastern_alr_cat), data = clean, family = binomial, na.action = na.exclude)
+print(summary(model1))
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+model2 <- glm(TB_score_2cat ~ 1, data = clean, family = binomial, na.action = na.exclude)
+lrtest(model1, model2)
+```
+
+```{r}
+# add the introduction
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10, data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + HIV_status + symptoms_duration_cough_duration
+
+# do it one by one
+# age
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat), data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + HIV_status + symptoms_duration_cough_duration
+
+# do it one by one
+# sex
+
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex, data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + symptoms_duration_cough_duration
+
+# do it one by one
+# smoking
+
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking, data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+```{r}
+hist(new_data[new_data$HIV_status == "negative" & new_data$Intro10 %in% c(0,1), ]$TB_score)
+```
+--> the distribution of TB_score looks quite normal, could we use it as continous variable instead of making it categorical?
+
+```{r}
+# add the covariates
+# + age + patient_sex + TB_RF_smoking + symptoms_duration_cough_duration
+
+# do it one by one
+# cough duration
+
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat)+ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking + as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+```
+
+
+# add the interaction
+
+
+```{r}
+library(lmtest)
+
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat)* Intro10 + as.factor(Eastern_alr_cat) * Intro10 + as.factor(Southeastern_alr_cat)* Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking+ as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+# compare to a model without the interaction
+model2 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat)+ as.factor(Southeastern_alr_cat) + Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking+ as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+lrtest(model1, model2)
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+```
+
+# pvalue for the ancestries
+
+
+```{r}
+library(lmtest)
+
+model1 <- glm(TB_score_2cat ~ as.factor(Western_alr_cat) + as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking+ as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+
+model2 <- glm(TB_score_2cat ~ Intro10 + as.factor(age_cat) + patient_sex + TB_RF_smoking+ as.factor(cough_cat), data = clean, family = binomial, na.action = na.exclude)
+summary(model1)
+lrtest(model1, model2)
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+```
+
+# now for the Ct-value
+
+# Check, whether the assumptions for a glm are met
+
+```{r}
+# create a clean dataset with no missing values for any of the ancestries, bacterial genotype, and the covariates included and it only comprises HIV negative patients
+
+clean <- na.omit(new_data[new_data$HIV_status == "negative", c("Western_alr_cat", "Southeastern_alr_cat", "Eastern_alr_cat", "patient_sex", "age_cat", "symptoms_duration_cough_duration", "Intro10", "TB_RF_smoking", "Ct_value", "cough_cat")])
+
+dim(clean)
+# Linearity
+# for the ancestries as category
+model1 <- glm(Ct_value ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat), data = clean, na.action = na.exclude, family = "gaussian")
+
+
+par(mfrow = c(1,3))
+for (anc in c("Western_alr_cat", "Eastern_alr_cat", "Southeastern_alr_cat")){
+boxplot(residuals(model1) ~ clean[[anc]], main = paste("Residuals vs ", anc))
+abline(h = 0, col = "red")}
+
+# Homoscedasticity
+
+plot(model1, which = 1)
+
+# Normality of Residuals
+# QQ-Plot
+
+qqnorm(residuals(model1))
+qqline(residuals(model1), col = "red")
+
+# Histogram of residuals
+
+hist(residuals(model1), main = "Histogram of residuals", xlab = "Residuals")
+
+```
+
+--> the qq-plot does not look good I would say.
+
+# try a log transformation of the ct_value
+
+```{r}
+# Linearity
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat), data = clean, na.action = na.exclude, family = "gaussian")
+
+
+par(mfrow = c(1,3))
+for (anc in c("Western_alr_cat", "Eastern_alr_cat", "Southeastern_alr_cat")){
+boxplot(residuals(model1) ~ clean[[anc]], main = paste("Residuals vs ", anc))
+abline(h = 0, col = "red")}
+
+# Homoscedasticity
+
+plot(model1, which = 1)
+
+# Normality of Residuals
+# QQ-Plot
+
+qqnorm(residuals(model1))
+qqline(residuals(model1), col = "red")
+
+# Histogram of residuals
+
+hist(residuals(model1), main = "Histogram of residuals", xlab = "Residuals")
+
+```
+--> The qq-plot looks much better
+
+# continue with log10 transformation 
+
+```{r}
+library(lmtest)
+
+# Linearity
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat), data = clean, na.action = na.exclude, family = "gaussian")
+
+
+summary(model1)
+
+```
+# add the introduction
+
+```{r}
+library(lmtest)
+
+# Linearity
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10, data = clean, na.action = na.exclude, family = "gaussian")
+
+model2 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat), data = clean, na.action = na.exclude, family = "gaussian")
+
+summary(model1)
+
+lrtest(model1, model2)
+
+```
+
+# add the covariates one by one
+
+```{r}
+library(lmtest)
+
+# sex
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10 + patient_sex, data = clean, na.action = na.exclude, family = "gaussian")
+
+summary(model1)
+
+
+```
+
+```{r}
+library(lmtest)
+
+# age
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10 + patient_sex + age_cat, data = clean, na.action = na.exclude, family = "gaussian")
+
+summary(model1)
+
+```
+
+```{r}
+library(lmtest)
+
+# smoking
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10 + patient_sex + age_cat + TB_RF_smoking, data = clean, na.action = na.exclude, family = "gaussian")
+
+summary(model1)
+
+```
+
+```{r}
+library(lmtest)
+
+# cough duration
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10 + patient_sex + age_cat + TB_RF_smoking + as.factor(cough_cat), data = clean, na.action = na.exclude, family = "gaussian")
+
+summary(model1)
+
+```
+
+# test, whether a model including the ancestries is better than a model without human ancestry
+# all ancestries
+```{r}
+library(lmtest)
+
+# for the ancestries as category
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10 + patient_sex + age_cat + TB_RF_smoking + as.factor(cough_cat), data = clean, na.action = na.exclude, family = "gaussian")
+model2 <- glm(log10(Ct_value) ~ Intro10 + patient_sex + age_cat + TB_RF_smoking + as.factor(cough_cat), data = clean, na.action = na.exclude, family = "gaussian")
+lrtest(model1, model2)
+summary(model1)
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+```
+
+
+# add the interaction 
+
+```{r}
+library(lmtest)
+
+# cough duration
+# for the ancestries as category
+model2 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)+ as.factor(Eastern_alr_cat) + as.factor(Southeastern_alr_cat) + Intro10 + patient_sex + age_cat + TB_RF_smoking + as.factor(cough_cat), data = clean, na.action = na.exclude, family = "gaussian")
+model1 <- glm(log10(Ct_value) ~ as.factor(Western_alr_cat)*Intro10+ as.factor(Eastern_alr_cat)*Intro10 + as.factor(Southeastern_alr_cat)*Intro10 + patient_sex + age_cat + TB_RF_smoking + as.factor(cough_cat), data = clean, na.action = na.exclude, family = "gaussian")
+
+summary(model1)
+ORs <- exp(cbind(OR = coef(model1), confint(model1)))
+round(ORs, digits = 2)
+lrtest(model1, model2)
+
+```
+
+
+
