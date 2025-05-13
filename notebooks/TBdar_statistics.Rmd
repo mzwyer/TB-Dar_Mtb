@@ -92,17 +92,6 @@ tbdar$other <- 1-(tbdar$Western_Bantu + tbdar$Southeastern_Bantu + tbdar$Eastern
 tbdar$socio_cat <- as.factor(tbdar$socio_cat)
 ```
 
-# look at the distribution of the continuous covariates you want to include
-
-```{r}
-# only include patients with either a bacterial or a human genome
-
-tbdar_subset <- subset(tbdar, Introduction %in% c("other", "Intro 1", "Intro 5", "Intro 9", "Intro 10") | Nigerian > 0, select=c("age", "Southeastern_Bantu", "Eastern_Bantu", "Western_Bantu", "other",  "symptoms_duration_cough_duration", "socioeconomic_status"))
-
-for (variable in c("age", "Southeastern_Bantu", "Eastern_Bantu", "Western_Bantu", "other",  "symptoms_duration_cough_duration", "socioeconomic_status")){
-  hist(tbdar_subset[[variable]], main = variable, breaks = seq(min(tbdar_subset[[variable]], na.rm = T), max(tbdar_subset[[variable]], na.rm = T), length.out = 25)) 
-}
-```
 
 
 # create the tables shown in the paper
@@ -211,6 +200,28 @@ new_data <- cbind(tbdar, alr_data)
 
 # build the model for X-ray score ending up with a model including the interaction
 # from now on, exclude HIV-positive patients
+
+# look at the distribution of the continuous covariates you want to include
+
+```{r}
+# only include patients with either a bacterial or a human genome
+
+tbdar_subset <- subset(tbdar, HIV_status =="negative" & (Introduction %in% c("other", "Intro 1", "Intro 5", "Intro 9", "Intro 10") | Nigerian > 0), select=c("age", "Southeastern_Bantu", "Eastern_Bantu", "Western_Bantu", "other",  "symptoms_duration_cough_duration", "socioeconomic_status"))
+
+for (variable in c("age", "Southeastern_Bantu", "Eastern_Bantu", "Western_Bantu", "other",  "symptoms_duration_cough_duration", "socioeconomic_status")){
+  hist(tbdar_subset[[variable]], main = variable, breaks = seq(min(tbdar_subset[[variable]], na.rm = T), max(tbdar_subset[[variable]], na.rm = T), length.out = 25)) 
+}
+```
+
+# look at the distribution of the outcome variables
+
+```{r}
+tbdar_subset <- subset(tbdar, HIV_status =="negative" & (Introduction %in% c("other", "Intro 1", "Intro 5", "Intro 9", "Intro 10") | Nigerian > 0) , select=c("Xray_score", "TB_score", "Ct_value"))
+
+for (variable in c("Xray_score", "TB_score", "Ct_value")){
+  hist(tbdar_subset[[variable]], main = variable, breaks = seq(min(tbdar_subset[[variable]], na.rm = T), max(tbdar_subset[[variable]], na.rm = T), length.out = 25)) 
+}
+```
 
 
 
